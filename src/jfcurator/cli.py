@@ -120,7 +120,7 @@ def languages(
     with make_client(cfg) as client:
         user_id = client.resolve_user(cfg.jellyfin.user)["Id"]
         lib = client.resolve_library(user_id, library)
-        data = LibraryData(client, user_id, lib["Id"])
+        data = LibraryData(client, user_id, lib["Id"], name=lib["Name"])
         eps = data.episodes_with_media
 
     tallies = {"Audio": Counter(), "Subtitle": Counter()}

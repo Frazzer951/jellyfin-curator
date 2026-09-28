@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
+from jfcurator import __version__
 from jfcurator.client import JellyfinClient, JellyfinError
 from jfcurator.config import Config
 from jfcurator.rules import LibraryData, evaluate
@@ -39,19 +40,33 @@ def run(
     results: list[SyncResult] = []
     errors: list[str] = []
 
+    rules = [(lib, r) for lib, r in cfg.iter_rules() if not only_set or r.name.lower() in only_set]
+    libraries = sorted({lib for lib, _ in rules})
+    log.info(
+        "jfcurator %s%s: %d rule(s) across %d library(s): %s",
+        __version__,
+        " [DRY RUN, no changes will be made]" if dry_run else "",
+        len(rules),
+        len(libraries),
+        ", ".join(libraries) or "-",
+    )
+
     with make_client(cfg) as client:
+        log.info("connecting to %s", cfg.jellyfin.url)
         user = client.resolve_user(cfg.jellyfin.user)
         user_id = user["Id"]
+        log.info("running as user %s", user["Name"])
         library_cache: dict[str, LibraryData] = {}
 
-        for lib_name, rule in cfg.iter_rules():
-            if only_set and rule.name.lower() not in only_set:
-                continue
+        for n, (lib_name, rule) in enumerate(rules, 1):
             full_name = f"{cfg.options.name_prefix}{rule.name}"
             try:
                 if lib_name not in library_cache:
                     lib = client.resolve_library(user_id, lib_name)
-                    library_cache[lib_name] = LibraryData(client, user_id, lib["Id"])
+                    library_cache[lib_name] = LibraryData(
+                        client, user_id, lib["Id"], name=lib["Name"]
+                    )
+                log.info("(%d/%d) [%s] %s", n, len(rules), lib_name, full_name)
                 picks = evaluate(rule, library_cache[lib_name])
                 log.info("[%s] %s: %d item(s) selected", lib_name, full_name, len(picks))
 

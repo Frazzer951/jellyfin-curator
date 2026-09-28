@@ -7,6 +7,7 @@ Deliberately hand-written rather than generated: Jellyfin's OpenAPI spec exposes
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -119,11 +120,13 @@ class JellyfinClient:
         include_item_types: str | None = None,
         fields: str = BASE_FIELDS,
         extra: JsonDict | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> list[JsonDict]:
         """Page through /Items, accumulating results.
 
         Jellyfin caps page sizes in practice, and `MediaSources` responses are
         large, so everything goes through here rather than one giant request.
+        `progress(done, total)` is called after every page.
         """
         params: JsonDict = {
             "userId": user_id,
@@ -142,6 +145,8 @@ class JellyfinClient:
         first = self.get("/Items", {**params, "startIndex": 0}) or {}
         out: list[JsonDict] = list(first.get("Items", []))
         total = first.get("TotalRecordCount", len(out))
+        if progress:
+            progress(len(out), total)
         if len(out) >= total or not out:
             return out
 
@@ -152,6 +157,8 @@ class JellyfinClient:
             pages = pool.map(lambda st: self.get("/Items", {**params, "startIndex": st}), starts)
             for page in pages:
                 out.extend((page or {}).get("Items", []))
+                if progress:
+                    progress(len(out), total)
         log.debug("fetched %d/%d items", len(out), total)
         return out
 

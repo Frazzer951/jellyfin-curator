@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import random
+import time
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from jfcurator.config import Sort, SortSpec
+from jfcurator.progress import track
 
 if TYPE_CHECKING:
     from jfcurator.client import JellyfinClient
 
 Item = dict[str, Any]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,18 +48,26 @@ class LibraryData:
     client: JellyfinClient
     user_id: str
     library_id: str
+    name: str = ""
     _extra: dict[str, list[Item]] = field(default_factory=dict)
 
     def _fetch(self, item_type: str, fields: str) -> list[Item]:
         from jfcurator.client import BASE_FIELDS
 
-        items = self.client.iter_items(
-            user_id=self.user_id,
-            parent_id=self.library_id,
-            include_item_types=item_type,
-            fields=f"{BASE_FIELDS},{fields}" if fields else BASE_FIELDS,
-            extra={"isMissing": "false"},
-        )
+        what = f"{item_type.lower()}s" + (" with media streams" if fields else "")
+        label = f"[{self.name}] fetching {what}"
+        log.info("%s…%s", label, " (slow on large libraries)" if fields else "")
+        started = time.perf_counter()
+        with track(label) as progress:
+            items = self.client.iter_items(
+                user_id=self.user_id,
+                parent_id=self.library_id,
+                include_item_types=item_type,
+                fields=f"{BASE_FIELDS},{fields}" if fields else BASE_FIELDS,
+                extra={"isMissing": "false"},
+                progress=progress,
+            )
+        log.info("%s: %d done in %.1fs", label, len(items), time.perf_counter() - started)
         # Belt and braces: virtual "missing episode" placeholders have no file.
         return [i for i in items if i.get("LocationType") != "Virtual"]
 
