@@ -1,0 +1,9 @@
+services:
+  jellyfin-curator:
+    build: .
+    image: jellyfin-curator:latest
+    container_name: jellyfin-curator
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/config

@@ -1,0 +1,50 @@
+# jellyfin-curator config
+# Copy to config.yaml. ${VAR} references are expanded from the environment.
+
+jellyfin:
+  url: ${JELLYFIN_URL}           # set in .env
+  api_key: ${JELLYFIN_API_KEY}   # set in .env (Dashboard → API Keys)
+  user: frazzer                  # whose watch state drives the watch-based rules
+
+options:
+  page_size: 500
+  name_prefix: ""                # e.g. "⚙ " to visually tag managed playlists
+
+libraries:
+  # Key must match the Jellyfin library name exactly (case-insensitive).
+  Anime:
+    rules:
+      Anime - Missing Subtitles:
+        type: media_filter
+        item_type: episode
+        match:
+          subtitles:
+            present: false
+        sort: series
+
+      Anime - Missing Japanese Audio:
+        type: media_filter
+        item_type: episode
+        match:
+          audio:
+            missing_language: [jpn]
+        sort: series
+
+      Anime - Continue Watching:
+        type: continue_watching
+        episodes_per_series: 1
+        sort: last_played desc
+        limit: 50
+
+      Anime - New Seasons:
+        type: new_seasons
+        sort: last_played desc
+
+  TV Shows:
+    rules:
+      TV - Continue Watching:
+        type: continue_watching
+        sort: last_played desc
+      TV - New Seasons:
+        type: new_seasons
+        sort: last_played desc
