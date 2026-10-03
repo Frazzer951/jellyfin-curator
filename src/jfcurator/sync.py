@@ -27,21 +27,75 @@ class SyncResult:
     dry_run: bool = False
 
 
-def plan_reorder(current: list[str], desired: list[str]) -> list[tuple[str, int]]:
-    """Moves needed to turn `current` into `desired`, as (value, target_index).
-
-    Both lists must hold the same elements. Moves are applied in sequence and
-    mirror Jellyfin's "remove then insert at index" semantics.
-    """
-    work = current[:]
-    moves: list[tuple[str, int]] = []
-    for idx, want in enumerate(desired):
-        if work[idx] == want:
+def _longest_ordered(ranks: list[int]) -> set[int]:
+    """Indices of a longest strictly increasing subsequence of `ranks` (-1 = never keep)."""
+    tails: list[int] = []  # tails[k]: index ending the best run of length k+1
+    prev: dict[int, int] = {}
+    for i, r in enumerate(ranks):
+        if r < 0:
             continue
-        work.remove(want)
-        work.insert(idx, want)
-        moves.append((want, idx))
-    return moves
+        lo, hi = 0, len(tails)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if ranks[tails[mid]] < r:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo:
+            prev[i] = tails[lo - 1]
+        if lo == len(tails):
+            tails.append(i)
+        else:
+            tails[lo] = i
+    keep: set[int] = set()
+    i = tails[-1] if tails else None
+    while i is not None:
+        keep.add(i)
+        i = prev.get(i)
+    return keep
+
+
+@dataclass
+class PlaylistPlan:
+    remove: list[int]  # indices into `current`
+    inserts: list[tuple[int, list[str]]]  # (position, ids), applied in order after removal
+    added: int
+    removed: int
+    moved: int
+
+
+def plan_playlist(current: list[str], desired: list[str]) -> PlaylistPlan:
+    """Edits that turn `current` into `desired` using only remove + insert-at-position.
+
+    Jellyfin's Move endpoint needs a user session (it 400s under an API key), so
+    reordering is done by pulling out-of-order entries and re-inserting them.
+    The longest already-ordered run of entries is left untouched.
+    """
+    rank = {v: i for i, v in enumerate(desired)}
+    keep = _longest_ordered([rank.get(v, -1) for v in current])
+    remove = [i for i in range(len(current)) if i not in keep]
+    kept = {current[i] for i in keep}
+
+    inserts: list[tuple[int, list[str]]] = []
+    for idx, want in enumerate(desired):
+        if want in kept:
+            continue
+        if inserts and inserts[-1][0] + len(inserts[-1][1]) == idx:
+            inserts[-1][1].append(want)
+        else:
+            inserts.append((idx, [want]))
+
+    present = set(current)
+    wanted_seen: set[str] = set()
+    removed = 0
+    for i in remove:
+        v = current[i]
+        if v not in rank or v in wanted_seen or v in kept:
+            removed += 1
+        wanted_seen.add(v)
+    added = sum(1 for v in desired if v not in present)
+    moved = len(remove) - removed
+    return PlaylistPlan(remove, inserts, added, removed, moved)
 
 
 def _dedupe(ids: list[str]) -> list[str]:
@@ -80,32 +134,13 @@ def sync_playlist(
         return result
 
     entries = client.playlist_items(pid, user_id)
-    desired_set = set(desired)
+    plan = plan_playlist([e["Id"] for e in entries], desired)
+    result.added, result.removed, result.moved = plan.added, plan.removed, plan.moved
 
-    # Drop anything unwanted, plus duplicate entries of wanted items.
-    seen: set[str] = set()
-    stale: list[str] = []
-    for e in entries:
-        if e["Id"] not in desired_set or e["Id"] in seen:
-            stale.append(e["PlaylistItemId"])
-        else:
-            seen.add(e["Id"])
-    missing = [i for i in desired if i not in seen]
-    result.removed, result.added = len(stale), len(missing)
-
-    if dry_run:
-        kept = [e["Id"] for e in entries if e["PlaylistItemId"] not in stale]
-        result.moved = len(plan_reorder(kept + missing, desired))
-    else:
-        client.remove_from_playlist(pid, stale)
-        client.add_to_playlist(pid, user_id, missing)
-        if stale or missing:
-            entries = client.playlist_items(pid, user_id)
-        entry_for = {e["Id"]: e["PlaylistItemId"] for e in entries}
-        moves = plan_reorder([e["Id"] for e in entries], desired)
-        for item_id, idx in moves:
-            client.move_playlist_item(pid, entry_for[item_id], idx)
-        result.moved = len(moves)
+    if not dry_run:
+        client.remove_from_playlist(pid, [entries[i]["PlaylistItemId"] for i in plan.remove])
+        for position, ids in plan.inserts:
+            client.add_to_playlist(pid, user_id, ids, position=position)
 
     if result.added or result.removed or result.moved:
         result.action = "updated"

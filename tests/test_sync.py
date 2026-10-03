@@ -1,7 +1,7 @@
 import itertools
 
 from jfcurator.rules import Pick
-from jfcurator.sync import plan_reorder, sync_playlist
+from jfcurator.sync import plan_playlist, sync_playlist
 
 _entry_ids = itertools.count()
 
@@ -11,23 +11,40 @@ def entry(item_id):
     return {"Id": item_id, "PlaylistItemId": f"e{next(_entry_ids)}"}
 
 
-def apply(current, moves):
-    work = current[:]
-    for value, idx in moves:
-        work.remove(value)
-        work.insert(idx, value)
+def apply(current, plan):
+    work = [v for i, v in enumerate(current) if i not in plan.remove]
+    for pos, ids in plan.inserts:
+        work[pos:pos] = ids
     return work
 
 
-def test_plan_reorder_produces_desired_order():
+def test_plan_produces_desired_order():
     current = ["a", "b", "c", "d", "e"]
     desired = ["e", "c", "a", "d", "b"]
-    moves = plan_reorder(current, desired)
-    assert apply(current, moves) == desired
+    plan = plan_playlist(current, desired)
+    assert apply(current, plan) == desired
+    assert (plan.added, plan.removed, plan.moved) == (0, 0, 3)
 
 
-def test_plan_reorder_noop():
-    assert plan_reorder(["a", "b"], ["a", "b"]) == []
+def test_plan_noop():
+    plan = plan_playlist(["a", "b"], ["a", "b"])
+    assert (plan.remove, plan.inserts) == ([], [])
+
+
+def test_plan_moving_one_item_touches_only_that_item():
+    current = list("abcdefgh")
+    desired = list("abcdefhg")
+    plan = plan_playlist(current, desired)
+    assert apply(current, plan) == desired
+    assert len(plan.remove) == 1 and plan.moved == 1
+
+
+def test_plan_handles_adds_removes_and_duplicates():
+    current = ["x", "b", "a", "b", "d"]
+    desired = ["a", "b", "c", "d"]
+    plan = plan_playlist(current, desired)
+    assert apply(current, plan) == desired
+    assert (plan.added, plan.removed, plan.moved) == (1, 2, 0)
 
 
 class FakeClient:
@@ -49,15 +66,10 @@ class FakeClient:
         self.calls.append(("remove", entry_ids))
         self.entries = [e for e in self.entries if e["PlaylistItemId"] not in entry_ids]
 
-    def add_to_playlist(self, pid, user_id, ids):
-        self.calls.append(("add", ids))
-        self.entries += [entry(i) for i in ids]
-
-    def move_playlist_item(self, pid, entry_id, idx):
-        self.calls.append(("move", entry_id, idx))
-        entry = next(e for e in self.entries if e["PlaylistItemId"] == entry_id)
-        self.entries.remove(entry)
-        self.entries.insert(idx, entry)
+    def add_to_playlist(self, pid, user_id, ids, *, position=None):
+        self.calls.append(("add", ids, position))
+        pos = len(self.entries) if position is None else position
+        self.entries[pos:pos] = [entry(i) for i in ids]
 
     def delete_item(self, item_id):
         self.calls.append(("delete", item_id))
@@ -82,6 +94,14 @@ def test_diff_update_ends_in_desired_order():
     r = sync(c, "a", "b", "c")
     assert [e["Id"] for e in c.entries] == ["a", "b", "c"]
     assert (r.action, r.added, r.removed) == ("updated", 1, 2)
+
+
+def test_reorder_uses_remove_and_insert():
+    c = FakeClient(["a", "b", "c"])
+    r = sync(c, "c", "a", "b")
+    assert [e["Id"] for e in c.entries] == ["c", "a", "b"]
+    assert (r.action, r.moved) == ("updated", 1)
+    assert [call[0] for call in c.calls] == ["remove", "add"]
 
 
 def test_dry_run_makes_no_calls_but_reports():

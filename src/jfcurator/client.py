@@ -189,21 +189,20 @@ class JellyfinClient:
             raise JellyfinError(f"playlist create for {name!r} returned no Id: {data}")
         return pid
 
-    def add_to_playlist(self, playlist_id: str, user_id: str, item_ids: list[str]) -> None:
+    def add_to_playlist(
+        self, playlist_id: str, user_id: str, item_ids: list[str], *, position: int | None = None
+    ) -> None:
         if not item_ids:
             return
-        self.post(
-            f"/Playlists/{playlist_id}/Items",
-            {"ids": ",".join(item_ids), "userId": user_id},
-        )
+        params: JsonDict = {"ids": ",".join(item_ids), "userId": user_id}
+        if position is not None:
+            params["position"] = position
+        self.post(f"/Playlists/{playlist_id}/Items", params)
 
     def remove_from_playlist(self, playlist_id: str, entry_ids: list[str]) -> None:
         if not entry_ids:
             return
         self.delete(f"/Playlists/{playlist_id}/Items", {"entryIds": ",".join(entry_ids)})
-
-    def move_playlist_item(self, playlist_id: str, entry_id: str, index: int) -> None:
-        self.post(f"/Playlists/{playlist_id}/Items/{entry_id}/Move/{index}")
 
     # ------------------------------------------------------------- collections
 
