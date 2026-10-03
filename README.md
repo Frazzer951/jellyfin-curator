@@ -17,6 +17,11 @@ or a `collection` (global, unordered; episodes are rolled up to their series).
 Sync is diff-based: existing playlists are edited in place, never recreated.
 The tool only touches playlists/collections whose names match a rule.
 
+`media_filter` rules accept per-series `overrides`, e.g. checking Chinese
+rather than Japanese audio for donghua in an anime library. An override's
+`audio`/`subtitles` replace the rule's; whichever it omits is inherited.
+See `config/config.example.yaml`.
+
 ## Setup
 
 ```sh

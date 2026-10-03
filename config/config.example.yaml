@@ -28,6 +28,14 @@ libraries:
         match:
           audio:
             missing_language: [jpn]
+            undefined_as_expected: true   # untagged (und) tracks count as Japanese
+        # Per-series exceptions: replaces `audio` and/or `subtitles` for these shows.
+        # Run `jfcurator languages Anime` to see how tracks are actually tagged.
+        overrides:
+          - series: [Link Click, The King's Avatar]
+            match:
+              audio:
+                missing_language: [chi, zho]
         sort: series
 
       Anime - Continue Watching:

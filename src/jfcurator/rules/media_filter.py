@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from jfcurator.config import MediaFilterRule, StreamCriteria
+import logging
+
+from jfcurator.config import MediaFilterRule, MediaMatch, StreamCriteria
 from jfcurator.rules.base import Item, LibraryData, Pick
 
 UNDEFINED_LANGUAGE = "und"
+
+log = logging.getLogger(__name__)
 
 
 def item_streams(item: Item) -> list[dict]:
@@ -35,17 +39,20 @@ def streams_match(streams: list[dict], criteria: StreamCriteria) -> bool:
     if not criteria.include_external:
         streams = [s for s in streams if not s.get("IsExternal")]
     langs = {stream_language(s) for s in streams}
+    untagged = criteria.undefined_as_expected and UNDEFINED_LANGUAGE in langs
 
     if criteria.present is not None and bool(streams) != criteria.present:
         return False
-    if criteria.languages and not langs.intersection(criteria.languages):
+    if criteria.languages and not (untagged or langs.intersection(criteria.languages)):
         return False
-    return not (criteria.missing_language and langs.intersection(criteria.missing_language))
+    return not (
+        criteria.missing_language and (untagged or langs.intersection(criteria.missing_language))
+    )
 
 
-def item_matches(item: Item, rule: MediaFilterRule) -> bool:
+def item_matches(item: Item, match: MediaMatch) -> bool:
     streams = item_streams(item)
-    for kind, criteria in (("Audio", rule.match.audio), ("Subtitle", rule.match.subtitles)):
+    for kind, criteria in (("Audio", match.audio), ("Subtitle", match.subtitles)):
         if criteria is None or criteria.is_empty():
             continue
         of_kind = [s for s in streams if s.get("Type") == kind]
@@ -56,8 +63,20 @@ def item_matches(item: Item, rule: MediaFilterRule) -> bool:
 
 def evaluate_media_filter(rule: MediaFilterRule, data: LibraryData) -> list[Pick]:
     items = data.episodes_with_media if rule.item_type == "episode" else data.movies_with_media
+    _warn_unknown_series(rule, items)
     return [
         Pick(item=i, last_played=(i.get("UserData") or {}).get("LastPlayedDate"))
         for i in items
-        if item_matches(i, rule)
+        if item_matches(i, rule.match_for(i.get("SeriesName")))
     ]
+
+
+def _warn_unknown_series(rule: MediaFilterRule, items: list[Item]) -> None:
+    """Flag override names that match nothing, which is almost always a typo."""
+    if not rule.overrides:
+        return
+    known = {(i.get("SeriesName") or "").strip().lower() for i in items}
+    for override in rule.overrides:
+        for name in override.series:
+            if name.strip().lower() not in known:
+                log.warning("[%s] override series %r not found in library", rule.name, name)
