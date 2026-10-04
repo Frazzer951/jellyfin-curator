@@ -283,6 +283,11 @@ class Options(Strict):
     concurrency: int = Field(default=4, ge=1, le=16)
     # Prefix applied to every created playlist/collection name.
     name_prefix: str = ""
+    # Per-run summary (.md) and debug log (.log), relative to the config file's
+    # folder. null disables both.
+    log_dir: str | None = "logs"
+    # How many runs' files to keep; 0 keeps everything.
+    keep_runs: int = Field(default=100, ge=0)
 
 
 class Config(Strict):

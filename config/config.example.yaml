@@ -9,6 +9,8 @@ jellyfin:
 options:
   page_size: 500
   name_prefix: ""                # e.g. "⚙ " to visually tag managed playlists
+  log_dir: logs                  # per-run summary + debug log, relative to this file; null disables
+  keep_runs: 100                 # runs' worth of files to keep; 0 keeps all
 
 libraries:
   # Key must match the Jellyfin library name exactly (case-insensitive).

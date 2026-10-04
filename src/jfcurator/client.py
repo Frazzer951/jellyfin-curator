@@ -21,6 +21,14 @@ BASE_FIELDS = "UserData,ParentId,ProviderIds,PremiereDate,DateCreated,Path"
 
 JsonDict = dict[str, Any]
 
+# Item ids go in the query string; ~100 x 33 chars stays well under the ~8KB
+# URL limit common to Jellyfin and reverse proxies (beyond it: 414).
+ID_CHUNK = 100
+
+
+def _chunks(ids: list[str], size: int = ID_CHUNK) -> list[list[str]]:
+    return [ids[i : i + size] for i in range(0, len(ids), size)]
+
 
 class JellyfinError(RuntimeError):
     pass
@@ -66,8 +74,12 @@ class JellyfinClient:
             resp = self._http.request(method, path, **kw)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
-            body = e.response.text[:500]
-            raise JellyfinError(f"{method} {path} -> {e.response.status_code}: {body}") from e
+            status = e.response.status_code
+            body = e.response.text[:500] or e.response.reason_phrase
+            log.debug(
+                "%s %s failed: %d, URL length %d", method, path, status, len(str(e.request.url))
+            )
+            raise JellyfinError(f"{method} {path} -> {status}: {body}") from e
         except httpx.HTTPError as e:
             raise JellyfinError(f"{method} {path} failed: {e}") from e
         if not resp.content or resp.status_code == 204:
@@ -192,17 +204,15 @@ class JellyfinClient:
     def add_to_playlist(
         self, playlist_id: str, user_id: str, item_ids: list[str], *, position: int | None = None
     ) -> None:
-        if not item_ids:
-            return
-        params: JsonDict = {"ids": ",".join(item_ids), "userId": user_id}
-        if position is not None:
-            params["position"] = position
-        self.post(f"/Playlists/{playlist_id}/Items", params)
+        for n, chunk in enumerate(_chunks(item_ids)):
+            params: JsonDict = {"ids": ",".join(chunk), "userId": user_id}
+            if position is not None:
+                params["position"] = position + n * ID_CHUNK
+            self.post(f"/Playlists/{playlist_id}/Items", params)
 
     def remove_from_playlist(self, playlist_id: str, entry_ids: list[str]) -> None:
-        if not entry_ids:
-            return
-        self.delete(f"/Playlists/{playlist_id}/Items", {"entryIds": ",".join(entry_ids)})
+        for chunk in _chunks(entry_ids):
+            self.delete(f"/Playlists/{playlist_id}/Items", {"entryIds": ",".join(chunk)})
 
     # ------------------------------------------------------------- collections
 
@@ -214,21 +224,21 @@ class JellyfinClient:
         return None
 
     def create_collection(self, name: str, item_ids: list[str]) -> str:
-        data = self.post("/Collections", {"name": name, "ids": ",".join(item_ids)}) or {}
+        first, rest = item_ids[:ID_CHUNK], item_ids[ID_CHUNK:]
+        data = self.post("/Collections", {"name": name, "ids": ",".join(first)}) or {}
         cid = data.get("Id")
         if not cid:
             raise JellyfinError(f"collection create for {name!r} returned no Id: {data}")
+        self.add_to_collection(cid, rest)
         return cid
 
     def add_to_collection(self, collection_id: str, item_ids: list[str]) -> None:
-        if not item_ids:
-            return
-        self.post(f"/Collections/{collection_id}/Items", {"ids": ",".join(item_ids)})
+        for chunk in _chunks(item_ids):
+            self.post(f"/Collections/{collection_id}/Items", {"ids": ",".join(chunk)})
 
     def remove_from_collection(self, collection_id: str, item_ids: list[str]) -> None:
-        if not item_ids:
-            return
-        self.delete(f"/Collections/{collection_id}/Items", {"ids": ",".join(item_ids)})
+        for chunk in _chunks(item_ids):
+            self.delete(f"/Collections/{collection_id}/Items", {"ids": ",".join(chunk)})
 
     # --------------------------------------------------------------------- misc
 

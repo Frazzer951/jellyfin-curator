@@ -62,7 +62,8 @@ class LibraryData:
         from jfcurator.client import BASE_FIELDS
 
         slow = "MediaSources" in fields
-        what = f"{item_type.lower()}s" + (" with media streams" if slow else "")
+        plural = {"Series": "series"}.get(item_type, f"{item_type.lower()}s")
+        what = plural + (" with media streams" if slow else "")
         label = f"[{self.name}] fetching {what}"
         log.info("%s…%s", label, " (slow on large libraries)" if slow else "")
         started = time.perf_counter()

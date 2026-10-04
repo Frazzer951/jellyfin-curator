@@ -7,10 +7,11 @@ change contents, so their Id (and anything clients key off it) stays stable.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from jfcurator.client import JellyfinClient
 from jfcurator.rules import Pick
+from jfcurator.rules.base import Item
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +27,20 @@ class SyncResult:
     moved: int = 0
     dry_run: bool = False
     meta_changed: bool = False
+    # Display names of what was added/removed, for the run summary.
+    added_items: list[str] = field(default_factory=list)
+    removed_items: list[str] = field(default_factory=list)
+
+
+def item_label(item: Item) -> str:
+    """Human-readable name: `Show S01E02 - Title` for episodes, `Title (Year)` otherwise."""
+    name = item.get("Name") or item.get("Id", "?")
+    if item.get("Type") == "Episode":
+        season, number = item.get("ParentIndexNumber"), item.get("IndexNumber")
+        code = f"S{season:02}E{number:02}" if season is not None and number is not None else ""
+        return " ".join(filter(None, [item.get("SeriesName"), code, "-", name]))
+    year = item.get("ProductionYear")
+    return f"{name} ({year})" if year else name
 
 
 def _longest_ordered(ranks: list[int]) -> set[int]:
@@ -123,6 +138,7 @@ def sync_playlist(
             result.action = "skipped"
             return result
         result.action, result.added = "created", len(desired)
+        result.added_items = _labels(picks, desired)
         if not dry_run:
             client.create_playlist(name, user_id, desired)
         return result
@@ -137,6 +153,10 @@ def sync_playlist(
     entries = client.playlist_items(pid, user_id)
     plan = plan_playlist([e["Id"] for e in entries], desired)
     result.added, result.removed, result.moved = plan.added, plan.removed, plan.moved
+    present = {e["Id"] for e in entries}
+    result.added_items = _labels(picks, [i for i in desired if i not in present])
+    wanted = set(desired)
+    result.removed_items = [item_label(e) for e in entries if e["Id"] not in wanted]
 
     if not dry_run:
         client.remove_from_playlist(pid, [entries[i]["PlaylistItemId"] for i in plan.remove])
@@ -146,6 +166,17 @@ def sync_playlist(
     if result.added or result.removed or result.moved:
         result.action = "updated"
     return result
+
+
+def _labels(picks: list[Pick], ids: list[str], *, rollup: bool = False) -> list[str]:
+    """Labels for `ids`, looked up among the picks (by rolled-up id for collections)."""
+    by_id: dict[str, str] = {}
+    for p in picks:
+        if not rollup or p.rollup_id == p.id:
+            by_id.setdefault(p.id, item_label(p.item))
+        else:  # an episode standing in for its series
+            by_id.setdefault(p.rollup_id, p.item.get("SeriesName") or p.rollup_id)
+    return [by_id.get(i, i) for i in ids]
 
 
 def collection_ids(picks: list[Pick]) -> list[str]:
@@ -199,6 +230,7 @@ def sync_collection(
             result.action = "skipped"
             return result
         result.action, result.added = "created", len(desired)
+        result.added_items = _labels(picks, desired, rollup=True)
         cid = None if dry_run else client.create_collection(name, desired)
         result.meta_changed = _sync_metadata(client, user_id, cid, meta, dry_run=dry_run)
         return result
@@ -211,7 +243,7 @@ def sync_collection(
         return result
 
     current = {
-        i["Id"]
+        i["Id"]: i
         for i in client.iter_items(
             user_id=user_id, parent_id=cid, fields="", extra={"recursive": "false"}
         )
@@ -219,6 +251,8 @@ def sync_collection(
     to_add = [i for i in desired if i not in current]
     to_remove = [i for i in current if i not in set(desired)]
     result.added, result.removed = len(to_add), len(to_remove)
+    result.added_items = _labels(picks, to_add, rollup=True)
+    result.removed_items = [item_label(current[i]) for i in to_remove]
     if not dry_run:
         client.add_to_collection(cid, to_add)
         client.remove_from_collection(cid, to_remove)

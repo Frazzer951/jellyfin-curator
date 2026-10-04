@@ -134,6 +134,7 @@ def run(
                 results.append(result)
             except (JellyfinError, AniListError) as e:
                 log.error("[%s] %s failed: %s", where, full_name, e)
+                log.debug("traceback for %s", full_name, exc_info=True)
                 errors.append(f"{rule.name}: {e}")
 
     for name in only_set - {r.name.lower() for r in all_rules}:

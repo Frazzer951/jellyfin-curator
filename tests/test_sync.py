@@ -182,3 +182,20 @@ def test_sync_collection_create_then_metadata():
     )
     assert r.action == "created" and client.created == [("X", ["s1"])]
     assert client.updates[0]["ForcedSortName"] == "+1"
+
+
+def test_sync_collection_records_names():
+    from jfcurator.sync import sync_collection
+
+    class Client(FakeCollectionClient):
+        def iter_items(self, **kw):
+            return [{"Id": "old", "Name": "Old Show"}, {"Id": "s1", "Name": "Kept"}]
+
+    picks = [
+        Pick(item={"Id": "s1", "Type": "Series", "Name": "Kept"}),
+        Pick(item={"Id": "e9", "Type": "Episode", "SeriesId": "s2", "SeriesName": "New Show"}),
+    ]
+    r = sync_collection(
+        Client(existing={"Id": "c"}), "u", "X", picks, delete_when_empty=True, dry_run=True
+    )
+    assert r.added_items == ["New Show"] and r.removed_items == ["Old Show"]

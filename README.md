@@ -64,6 +64,19 @@ uv run jfcurator run
 
 `.env` and `config/config.yaml` are git-ignored.
 
+## Run logs
+
+Each run writes two files to `logs/`, next to the config file (`/config/logs`
+in Docker):
+
+- `run-<timestamp>.md` is a summary: one row per rule, then the names of
+  everything each playlist/collection gained or lost, plus any errors.
+- `run-<timestamp>.log` is the debug log: everything, including each HTTP
+  request and the full traceback of any failure. The console only shows INFO.
+
+Dry runs get a `-dryrun` suffix. The last `keep_runs` (default 100) runs are
+kept. Set `options.log_dir: null` to turn both off.
+
 ## Docker / Unraid
 
 ```sh

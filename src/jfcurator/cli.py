@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -17,7 +18,8 @@ from rich.table import Table
 from jfcurator import __version__
 from jfcurator.client import JellyfinError
 from jfcurator.config import Config, load_config
-from jfcurator.logging_setup import setup_logging
+from jfcurator.logging_setup import run_log_file, setup_logging
+from jfcurator.report import PREFIX, write_summary
 from jfcurator.rules.base import LibraryData
 from jfcurator.rules.media_filter import item_streams, stream_language
 from jfcurator.runner import make_client, run
@@ -60,6 +62,42 @@ def _print_results(results: list[SyncResult]) -> None:
             r.name, r.kind, action, str(r.total), str(r.added), str(r.removed), str(r.moved)
         )
     console.print(table)
+
+
+def _run_once(
+    cfg: Config, config_path: Path, *, dry_run: bool = False, only: list[str] | None = None
+) -> tuple[list[SyncResult], list[str]]:
+    """One sync, mirrored into a debug log and summarised in the logs folder.
+
+    Never raises for run failures: they're logged (with traceback, in the
+    debug log) and returned as errors so the summary still gets written.
+    """
+    log_dir = config_path.parent / cfg.options.log_dir if cfg.options.log_dir is not None else None
+    started = datetime.now()
+    stem = f"{PREFIX}{started:%Y%m%d-%H%M%S}" + ("-dryrun" if dry_run else "")
+    results: list[SyncResult] = []
+    errors: list[str] = []
+    with run_log_file(log_dir / f"{stem}.log" if log_dir else None):
+        try:
+            results, errors = run(cfg, dry_run=dry_run, only=only or ())
+        except JellyfinError as e:
+            log.error("run failed: %s", e)
+            log.debug("traceback", exc_info=True)
+            errors.append(str(e))
+        except Exception as e:
+            log.exception("run crashed: %s", e)
+            errors.append(f"unexpected {type(e).__name__}: {e}")
+        if log_dir:
+            write_summary(
+                log_dir,
+                results,
+                errors,
+                started=started,
+                duration=(datetime.now() - started).total_seconds(),
+                dry_run=dry_run,
+                keep=cfg.options.keep_runs,
+            )
+    return results, errors
 
 
 @app.command()
@@ -157,12 +195,9 @@ def run_cmd(
     """Evaluate all rules once and sync playlists/collections."""
     setup_logging(verbose)
     cfg = _load(config)
-    try:
-        results, errors = run(cfg, dry_run=dry_run, only=only or ())
-    except JellyfinError as e:
-        console.print(f"[red]{e}[/]")
-        raise typer.Exit(1) from e
-    _print_results(results)
+    results, errors = _run_once(cfg, config, dry_run=dry_run, only=only)
+    if results:
+        _print_results(results)
     for err in errors:
         console.print(f"[red]error:[/] {err}")
     if errors:
@@ -186,11 +221,13 @@ def daemon(
     while True:
         try:
             cfg = load_config(config)
-            results, errors = run(cfg)
-            _print_results(results)
+        except (ValidationError, ValueError, OSError) as e:
+            log.error("config error, skipping this cycle: %s", e)
+        else:
+            results, errors = _run_once(cfg, config)
+            if results:
+                _print_results(results)
             for err in errors:
                 log.error(err)
-        except (ValidationError, ValueError, OSError, JellyfinError) as e:
-            log.error("run failed: %s", e)
         log.info("next run in %ss", interval)
         time.sleep(interval)

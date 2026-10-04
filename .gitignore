@@ -11,3 +11,4 @@ build/
 config/config.yaml
 cache/
 *.log
+config/logs/
