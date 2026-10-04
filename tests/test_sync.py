@@ -121,3 +121,64 @@ def test_empty_deletes():
     c = FakeClient(["a"])
     assert sync(c).action == "deleted"
     assert c.calls == [("delete", "pl")]
+
+
+class FakeCollectionClient:
+    def __init__(self, existing=None, members=(), item=None):
+        self.existing = existing
+        self.members = list(members)
+        self.item = item or {}
+        self.updates = []
+        self.created = []
+
+    def find_collection(self, user_id, name):
+        return self.existing
+
+    def create_collection(self, name, ids):
+        self.created.append((name, ids))
+        self.item = {"Id": "new", "Name": name}
+        return "new"
+
+    def iter_items(self, **kw):
+        return [{"Id": i} for i in self.members]
+
+    def add_to_collection(self, cid, ids):
+        self.members += ids
+
+    def remove_from_collection(self, cid, ids):
+        self.members = [m for m in self.members if m not in ids]
+
+    def get_item(self, user_id, item_id):
+        return dict(self.item)
+
+    def update_item(self, item):
+        self.updates.append(item)
+        self.item = item
+
+
+def test_sync_collection_sets_metadata_only_when_changed():
+    from jfcurator.sync import sync_collection
+
+    picks = [Pick(item={"Id": "s1", "Type": "Series"})]
+    client = FakeCollectionClient(
+        existing={"Id": "c"}, members=["s1"], item={"Id": "c", "Name": "X", "Overview": "old"}
+    )
+    kw = dict(delete_when_empty=True, dry_run=False, sort_title="+1", summary="new")
+    r = sync_collection(client, "u", "X", picks, **kw)
+    assert r.action == "updated" and r.meta_changed
+    assert client.updates == [{"Id": "c", "Name": "X", "Overview": "new", "ForcedSortName": "+1"}]
+
+    r = sync_collection(client, "u", "X", picks, **kw)
+    assert r.action == "unchanged" and len(client.updates) == 1
+
+
+def test_sync_collection_create_then_metadata():
+    from jfcurator.sync import sync_collection
+
+    client = FakeCollectionClient()
+    picks = [Pick(item={"Id": "e1", "Type": "Episode", "SeriesId": "s1"})]
+    r = sync_collection(
+        client, "u", "X", picks, delete_when_empty=True, dry_run=False, sort_title="+1"
+    )
+    assert r.action == "created" and client.created == [("X", ["s1"])]
+    assert client.updates[0]["ForcedSortName"] == "+1"

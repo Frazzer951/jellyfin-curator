@@ -10,9 +10,37 @@ spirit of Kometa. Runs once from the CLI or as a long-lived Docker container.
 | `media_filter` | episodes/movies by audio/subtitle streams | missing subs, missing Japanese audio |
 | `continue_watching` | next unwatched episode of each started-but-unfinished season | per-library "continue watching" |
 | `new_seasons` | first episode of an untouched season after a finished one | "new seasons of shows I watch" |
+| `anilist_list` | series/movies on a public AniList user's lists, by entry status | Planning / Watching / Completed |
+| `anilist_top_rated` | AniList's top `count` anime by score that you have | "Top Rated" |
+| `binge` | shows that are started with unwatched episodes left (`series_status: [ended]` to narrow) | "Binge", "Binge Ended" |
+| `not_started` | shows with nothing played | "Not Started" |
+| `all_items` | every series and movie, usually with `exclude` | "No Collection" |
 
 Every rule targets a `playlist` (default: ordered, owned by the configured user)
 or a `collection` (global, unordered; episodes are rolled up to their series).
+The last five types are collection-only.
+
+## Collections
+
+Jellyfin collections are global rather than per library, so collections that
+draw from several libraries go in the top-level `collections:` section with a
+`libraries:` list. Each name is one collection, and rule names must be unique.
+
+- `exclude: [Other Rule, ...]` drops anything those rules selected, compared by
+  series/movie. Rules are evaluated in dependency order. If an excluded rule
+  fails, the rule that excludes it is skipped as well.
+- `sort_title` / `summary` set the collection's sort title and overview, which
+  controls its position in the Collections view.
+- Collections have no stored item order in Jellyfin. `sort` therefore only
+  decides which items survive a `limit`.
+
+AniList ids are matched to Jellyfin items directly on the `AniList` provider id
+(set by the AniList metadata plugin on series). Otherwise they are matched
+through the [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs)
+mapping, the same source Kometa uses: AniDB and TVDB ids for shows, AniDB and
+IMDb ids for movies. The mapping is cached for 24h. A later-season AniList entry
+maps to its whole show, as in Kometa. Specials/OVAs (TVDB season 0) don't, so an
+OVA on your Planning list won't pull in the parent series.
 
 Sync is diff-based: existing playlists are edited in place, never recreated.
 The tool only touches playlists/collections whose names match a rule.
@@ -29,7 +57,7 @@ cp .env.example .env                              # set JELLYFIN_URL + JELLYFIN_
 cp config/config.example.yaml config/config.yaml  # edit rules
 uv sync
 uv run jfcurator check              # connectivity, user, library names
-uv run jfcurator languages Anime    # how tracks are actually tagged
+uv run jfcurator languages "Anime Shows"   # how tracks are actually tagged
 uv run jfcurator run --dry-run      # preview changes
 uv run jfcurator run
 ```

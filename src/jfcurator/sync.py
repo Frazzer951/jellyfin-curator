@@ -25,6 +25,7 @@ class SyncResult:
     removed: int = 0
     moved: int = 0
     dry_run: bool = False
+    meta_changed: bool = False
 
 
 def _longest_ordered(ranks: list[int]) -> set[int]:
@@ -149,13 +150,29 @@ def sync_playlist(
 
 def collection_ids(picks: list[Pick]) -> list[str]:
     """Collections hold series/movies, not episodes: roll episodes up to their show."""
-    ids = []
-    for p in picks:
-        if p.item.get("Type") == "Episode" and p.item.get("SeriesId"):
-            ids.append(p.item["SeriesId"])
-        else:
-            ids.append(p.id)
-    return _dedupe(ids)
+    return _dedupe([p.rollup_id for p in picks])
+
+
+def _sync_metadata(
+    client: JellyfinClient,
+    user_id: str,
+    collection_id: str | None,
+    fields: dict[str, str],
+    *,
+    dry_run: bool,
+) -> bool:
+    """Set the given DTO fields on the collection. Returns whether anything changed."""
+    if not fields:
+        return False
+    if collection_id is None:  # dry run of a collection we'd create
+        return True
+    item = client.get_item(user_id, collection_id)
+    changed = {k: v for k, v in fields.items() if item.get(k) != v}
+    if changed and not dry_run:
+        client.update_item({**item, **changed})
+    if changed:
+        log.info("%s: setting %s", item.get("Name"), ", ".join(changed))
+    return bool(changed)
 
 
 def sync_collection(
@@ -166,20 +183,24 @@ def sync_collection(
     *,
     delete_when_empty: bool,
     dry_run: bool,
+    sort_title: str | None = None,
+    summary: str | None = None,
 ) -> SyncResult:
     desired = collection_ids(picks)
     existing = client.find_collection(user_id, name)
     result = SyncResult(
         name=name, kind="collection", action="unchanged", total=len(desired), dry_run=dry_run
     )
+    meta = {"ForcedSortName": sort_title, "Overview": summary}
+    meta = {k: v for k, v in meta.items() if v is not None}
 
     if existing is None:
         if not desired:
             result.action = "skipped"
             return result
         result.action, result.added = "created", len(desired)
-        if not dry_run:
-            client.create_collection(name, desired)
+        cid = None if dry_run else client.create_collection(name, desired)
+        result.meta_changed = _sync_metadata(client, user_id, cid, meta, dry_run=dry_run)
         return result
 
     cid = existing["Id"]
@@ -201,6 +222,7 @@ def sync_collection(
     if not dry_run:
         client.add_to_collection(cid, to_add)
         client.remove_from_collection(cid, to_remove)
-    if to_add or to_remove:
+    result.meta_changed = _sync_metadata(client, user_id, cid, meta, dry_run=dry_run)
+    if to_add or to_remove or result.meta_changed:
         result.action = "updated"
     return result

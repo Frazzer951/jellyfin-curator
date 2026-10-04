@@ -12,7 +12,7 @@ options:
 
 libraries:
   # Key must match the Jellyfin library name exactly (case-insensitive).
-  Anime:
+  Anime Shows:
     rules:
       Anime - Missing Subtitles:
         type: media_filter
@@ -30,7 +30,7 @@ libraries:
             missing_language: [jpn]
             undefined_as_expected: true   # untagged (und) tracks count as Japanese
         # Per-series exceptions: replaces `audio` and/or `subtitles` for these shows.
-        # Run `jfcurator languages Anime` to see how tracks are actually tagged.
+        # Run `jfcurator languages "Anime Shows"` to see how tracks are actually tagged.
         overrides:
           - series: [Link Click, The King's Avatar]
             match:
@@ -48,7 +48,7 @@ libraries:
         type: new_seasons
         sort: last_played desc
 
-  TV Shows:
+  Shows:
     rules:
       TV - Continue Watching:
         type: continue_watching
@@ -56,3 +56,78 @@ libraries:
       TV - New Seasons:
         type: new_seasons
         sort: last_played desc
+
+# Collections are global in Jellyfin, so ones that draw from several libraries
+# live here rather than under `libraries:`. Each name is one collection.
+# `exclude` drops anything another rule selected (by series/movie).
+# `sort_title` controls where it sits in the Collections view.
+collections:
+  # --- AniList (public lists; no account link needed) -----------------------
+  Planning to Watch:
+    type: anilist_list
+    libraries: [Anime Shows, Anime Movies]
+    username: Frazzer
+    status: planning          # planning | current (watching) | paused | dropped | completed | repeating
+    sort_title: +1.0_Planning to Watch
+
+  Currently Watching:
+    type: anilist_list
+    libraries: [Anime Shows]
+    username: Frazzer
+    status: current
+    sort_title: +1.1_Currently Watching
+
+  Paused:
+    type: anilist_list
+    libraries: [Anime Shows]
+    username: Frazzer
+    status: paused
+    sort_title: +1.2_Paused
+
+  Dropped:
+    type: anilist_list
+    libraries: [Anime Shows]
+    username: Frazzer
+    status: dropped
+    sort_title: +1.3_Dropped
+
+  Completed:
+    type: anilist_list
+    libraries: [Anime Shows, Anime Movies]
+    username: Frazzer
+    status: completed
+    sort_title: +1.4_Completed
+
+  No Collection:
+    type: all_items
+    libraries: [Anime Shows, Anime Movies]
+    exclude: [Planning to Watch, Currently Watching, Paused, Dropped, Completed]
+    sort_title: +1.5_No Collection
+
+  AniList Top Rated:
+    type: anilist_top_rated
+    libraries: [Anime Shows, Anime Movies]
+    count: 200                # top N on AniList, before matching against the library
+    sort_title: +0.0_Top Rated
+
+  # --- Watch state ----------------------------------------------------------
+  Binge:
+    type: binge               # started, with unwatched episodes left
+    libraries: [Anime Shows, Shows]
+    exclude: [Dropped]
+    sort_title: ++Binge
+    summary: Shows that I should finish because I haven't.
+
+  Binge Ended:
+    type: binge
+    libraries: [Anime Shows, Shows]
+    series_status: [ended]
+    exclude: [Dropped]
+    sort_title: ++BingeEnded
+    summary: Shows that I should finish because they've ended production.
+
+  Not Started:
+    type: not_started
+    libraries: [Anime Shows, Shows]
+    sort_title: ++a_NotStarted
+    summary: Shows I haven't started

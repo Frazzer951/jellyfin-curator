@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from jfcurator.config import ContinueWatchingRule, NewSeasonsRule
+from jfcurator.config import BingeRule, ContinueWatchingRule, NewSeasonsRule, NotStartedRule
 from jfcurator.rules.base import Item, LibraryData, Pick
 
 
@@ -125,3 +125,36 @@ def evaluate_new_seasons(rule: NewSeasonsRule, data: LibraryData) -> list[Pick]:
         first_ep = upcoming[0].episodes[0]
         picks.append(Pick(item=first_ep, last_played=_series_last_played(seasons)))
     return picks
+
+
+def _series_with_episodes(
+    data: LibraryData, include_specials: bool
+) -> list[tuple[Item, list[Season], list[Item]]]:
+    """(series, seasons, episodes) for every series that has episodes on disk."""
+    by_series = group_by_series(data.episodes, include_specials)
+    out = []
+    for series in data.series:
+        seasons = by_series.get(series["Id"])
+        if seasons:
+            out.append((series, seasons, [e for s in seasons for e in s.episodes]))
+    return out
+
+
+def evaluate_binge(rule: BingeRule, data: LibraryData) -> list[Pick]:
+    picks: list[Pick] = []
+    for series, seasons, eps in _series_with_episodes(data, rule.include_specials):
+        if not any(is_started(e) for e in eps) or all(is_played(e) for e in eps):
+            continue
+        status = (series.get("Status") or "").lower()
+        if rule.series_status is not None and status not in rule.series_status:
+            continue
+        picks.append(Pick(item=series, last_played=_series_last_played(seasons)))
+    return picks
+
+
+def evaluate_not_started(rule: NotStartedRule, data: LibraryData) -> list[Pick]:
+    return [
+        Pick(item=series)
+        for series, _, eps in _series_with_episodes(data, rule.include_specials)
+        if not any(is_started(e) for e in eps)
+    ]

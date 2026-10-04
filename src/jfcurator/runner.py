@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from contextlib import closing
 
 from jfcurator import __version__
 from jfcurator.client import JellyfinClient, JellyfinError
-from jfcurator.config import Config
+from jfcurator.config import Config, Rule
 from jfcurator.rules import LibraryData, evaluate
+from jfcurator.rules.anilist import AniListError, AniListSource
 from jfcurator.sync import SyncResult, sync_collection, sync_playlist
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,19 @@ def make_client(cfg: Config) -> JellyfinClient:
     )
 
 
+def _with_dependencies(rules: list[Rule], selected: set[str]) -> set[str]:
+    """`selected` plus every rule they exclude, transitively (lower-cased names)."""
+    by_name = {r.name.lower(): r for r in rules}
+    needed: set[str] = set()
+    stack = list(selected & by_name.keys())
+    while stack:
+        name = stack.pop()
+        if name not in needed:
+            needed.add(name)
+            stack.extend(ref.lower() for ref in by_name[name].exclude)
+    return needed
+
+
 def run(
     cfg: Config,
     *,
@@ -34,14 +49,20 @@ def run(
 ) -> tuple[list[SyncResult], list[str]]:
     """Evaluate and sync every enabled rule. Returns (results, errors).
 
-    A failing rule is logged and skipped so one bad rule can't block the rest.
+    A failing rule is logged and skipped so one bad rule can't block the rest,
+    though rules that exclude it are skipped too: without its picks they'd
+    sweep in everything it was meant to keep out.
     """
+    all_rules = cfg.iter_rules()
     only_set = {o.lower() for o in only}
+    selected = only_set or {r.name.lower() for r in all_rules}
+    # --only still evaluates (without syncing) whatever the chosen rules exclude.
+    needed = _with_dependencies(all_rules, selected)
+    rules = [r for r in all_rules if r.name.lower() in needed]
     results: list[SyncResult] = []
     errors: list[str] = []
 
-    rules = [(lib, r) for lib, r in cfg.iter_rules() if not only_set or r.name.lower() in only_set]
-    libraries = sorted({lib for lib, _ in rules})
+    libraries = sorted({lib for r in rules for lib in r.libraries})
     log.info(
         "jfcurator %s%s: %d rule(s) across %d library(s): %s",
         __version__,
@@ -51,28 +72,47 @@ def run(
         ", ".join(libraries) or "-",
     )
 
-    with make_client(cfg) as client:
+    anilist = AniListSource()
+    with make_client(cfg) as client, closing(anilist):
         log.info("connecting to %s", cfg.jellyfin.url)
         user = client.resolve_user(cfg.jellyfin.user)
         user_id = user["Id"]
         log.info("running as user %s", user["Name"])
         library_cache: dict[str, LibraryData] = {}
+        # Each evaluated rule's picks as series/movie ids, for other rules' `exclude`.
+        outputs: dict[str, set[str]] = {}
 
-        for n, (lib_name, rule) in enumerate(rules, 1):
+        def library(name: str) -> LibraryData:
+            if name not in library_cache:
+                lib = client.resolve_library(user_id, name)
+                library_cache[name] = LibraryData(client, user_id, lib["Id"], name=lib["Name"])
+            return library_cache[name]
+
+        for n, rule in enumerate(rules, 1):
             full_name = f"{cfg.options.name_prefix}{rule.name}"
+            where = ", ".join(rule.libraries)
+            failed = [ref for ref in rule.exclude if ref.lower() not in outputs]
+            if failed:
+                msg = f"skipped: excluded rule(s) failed: {', '.join(failed)}"
+                log.error("[%s] %s %s", where, full_name, msg)
+                errors.append(f"{rule.name}: {msg}")
+                continue
             try:
-                if lib_name not in library_cache:
-                    lib = client.resolve_library(user_id, lib_name)
-                    library_cache[lib_name] = LibraryData(
-                        client, user_id, lib["Id"], name=lib["Name"]
-                    )
-                log.info("(%d/%d) [%s] %s", n, len(rules), lib_name, full_name)
-                picks = evaluate(rule, library_cache[lib_name])
-                log.info("[%s] %s: %d item(s) selected", lib_name, full_name, len(picks))
+                log.info("(%d/%d) [%s] %s", n, len(rules), where, full_name)
+                exclude = set().union(*(outputs[ref.lower()] for ref in rule.exclude))
+                picks = evaluate(
+                    rule,
+                    [library(lib) for lib in rule.libraries],
+                    anilist=anilist,
+                    exclude=exclude,
+                )
+                outputs[rule.name.lower()] = {p.rollup_id for p in picks}
+                log.info("[%s] %s: %d item(s) selected", where, full_name, len(picks))
+                if rule.name.lower() not in selected:
+                    continue
 
-                sync = sync_playlist if rule.target == "playlist" else sync_collection
-                results.append(
-                    sync(
+                if rule.target == "playlist":
+                    result = sync_playlist(
                         client,
                         user_id,
                         full_name,
@@ -80,13 +120,22 @@ def run(
                         delete_when_empty=rule.delete_when_empty,
                         dry_run=dry_run,
                     )
-                )
-            except JellyfinError as e:
-                log.error("[%s] %s failed: %s", lib_name, full_name, e)
-                errors.append(f"{lib_name}/{rule.name}: {e}")
+                else:
+                    result = sync_collection(
+                        client,
+                        user_id,
+                        full_name,
+                        picks,
+                        delete_when_empty=rule.delete_when_empty,
+                        dry_run=dry_run,
+                        sort_title=rule.sort_title,
+                        summary=rule.summary,
+                    )
+                results.append(result)
+            except (JellyfinError, AniListError) as e:
+                log.error("[%s] %s failed: %s", where, full_name, e)
+                errors.append(f"{rule.name}: {e}")
 
-    if only_set:
-        seen = {r.name.lower() for _, r in cfg.iter_rules()}
-        for name in only_set - seen:
-            errors.append(f"--only {name!r} matched no enabled rule")
+    for name in only_set - {r.name.lower() for r in all_rules}:
+        errors.append(f"--only {name!r} matched no enabled rule")
     return results, errors

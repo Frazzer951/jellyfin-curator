@@ -36,6 +36,13 @@ class Pick:
     def id(self) -> str:
         return self.item["Id"]
 
+    @property
+    def rollup_id(self) -> str:
+        """The series for an episode, otherwise the item itself (what collections hold)."""
+        if self.item.get("Type") == "Episode" and self.item.get("SeriesId"):
+            return self.item["SeriesId"]
+        return self.id
+
 
 @dataclass
 class LibraryData:
@@ -54,9 +61,10 @@ class LibraryData:
     def _fetch(self, item_type: str, fields: str) -> list[Item]:
         from jfcurator.client import BASE_FIELDS
 
-        what = f"{item_type.lower()}s" + (" with media streams" if fields else "")
+        slow = "MediaSources" in fields
+        what = f"{item_type.lower()}s" + (" with media streams" if slow else "")
         label = f"[{self.name}] fetching {what}"
-        log.info("%s…%s", label, " (slow on large libraries)" if fields else "")
+        log.info("%s…%s", label, " (slow on large libraries)" if slow else "")
         started = time.perf_counter()
         with track(label) as progress:
             items = self.client.iter_items(
@@ -82,6 +90,14 @@ class LibraryData:
     @cached_property
     def movies_with_media(self) -> list[Item]:
         return self._fetch("Movie", "MediaSources")
+
+    @cached_property
+    def series(self) -> list[Item]:
+        return self._fetch("Series", "Status")
+
+    @cached_property
+    def movies(self) -> list[Item]:
+        return self._fetch("Movie", "")
 
 
 def _series_key(item: Item) -> tuple:

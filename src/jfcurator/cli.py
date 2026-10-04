@@ -74,8 +74,9 @@ def validate(config: ConfigOpt = Path("config/config.yaml")) -> None:
     cfg = _load(config)
     rules = cfg.iter_rules()
     console.print(f"[green]ok[/] — {len(rules)} enabled rule(s)")
-    for lib, rule in rules:
-        console.print(f"  [{lib}] {rule.name}  ({rule.type} → {rule.target})")
+    for rule in rules:
+        where = ", ".join(rule.libraries)
+        console.print(f"  [{where}] {rule.name}  ({rule.type} → {rule.target})", markup=False)
 
 
 @app.command()
@@ -91,12 +92,14 @@ def check(config: ConfigOpt = Path("config/config.yaml"), verbose: VerboseOpt = 
             )
             user = client.resolve_user(cfg.jellyfin.user)
             console.print(f"user: {user['Name']} ({user['Id']})")
-            libs = {lib["Name"]: lib for lib in client.libraries(user["Id"])}
-            for name, lib in libs.items():
-                used = "[cyan]configured[/]" if name in cfg.libraries else ""
-                console.print(f"  library: {name} [dim]{lib.get('CollectionType', '')}[/] {used}")
-            for name in cfg.libraries:
-                if name not in libs:
+            libs = {lib["Name"].lower(): lib for lib in client.libraries(user["Id"])}
+            configured = {name.lower() for name in cfg.library_names()}
+            for key, lib in libs.items():
+                used = "[cyan]configured[/]" if key in configured else ""
+                kind = lib.get("CollectionType", "")
+                console.print(f"  library: {lib['Name']} [dim]{kind}[/] {used}")
+            for name in cfg.library_names():
+                if name.lower() not in libs:
                     console.print(f"[red]configured library not found:[/] {name}")
                     raise typer.Exit(1)
     except JellyfinError as e:

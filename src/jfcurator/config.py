@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -113,11 +113,25 @@ class RuleBase(Strict):
     sort: SortSpec = SortSpec()
     # Remove the playlist/collection entirely when the rule produces no items.
     delete_when_empty: bool = True
+    # Libraries the rule draws from. Filled in for rules under `libraries:`;
+    # required for top-level `collections:`, which may span several.
+    libraries: list[str] = Field(default_factory=list)
+    # Names of other rules: anything they selected (rolled up to series/movie) is dropped.
+    exclude: list[str] = Field(default_factory=list)
+    # Collection metadata. Left untouched when unset.
+    sort_title: str | None = None
+    summary: str | None = None
 
     @field_validator("sort", mode="before")
     @classmethod
     def _parse_sort(cls, v: object) -> object:
         return SortSpec.parse(v) if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _collection_only_metadata(self) -> RuleBase:
+        if self.target != "collection" and (self.sort_title or self.summary):
+            raise ValueError("sort_title/summary only apply to collections")
+        return self
 
 
 class MediaFilterRule(RuleBase):
@@ -169,8 +183,79 @@ class NewSeasonsRule(RuleBase):
     sort: SortSpec = SortSpec(key=Sort.LAST_PLAYED, descending=True)
 
 
+class AniListStatus(StrEnum):
+    PLANNING = "planning"
+    CURRENT = "current"
+    PAUSED = "paused"
+    DROPPED = "dropped"
+    COMPLETED = "completed"
+    REPEATING = "repeating"
+
+
+class AniListListRule(RuleBase):
+    """Series/movies on a public AniList user's list(s)."""
+
+    type: Literal["anilist_list"]
+    target: Literal["collection"] = "collection"
+    username: str = Field(min_length=1)
+    # Matched against each entry's status, so custom lists are ignored.
+    status: list[AniListStatus] = Field(min_length=1)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _listify(cls, v: object) -> object:
+        v = [v] if isinstance(v, str) else v
+        # "watching" is what the AniList UI calls CURRENT.
+        return [{"watching": "current"}.get(s.lower(), s.lower()) for s in v]
+
+
+class AniListTopRatedRule(RuleBase):
+    """The top `count` anime on AniList by score that are in the library."""
+
+    type: Literal["anilist_top_rated"]
+    target: Literal["collection"] = "collection"
+    count: int = Field(default=100, gt=0, le=1000)
+
+
+class BingeRule(RuleBase):
+    """Shows that are started but have unwatched episodes left."""
+
+    type: Literal["binge"]
+    target: Literal["collection"] = "collection"
+    include_specials: bool = False
+    # Jellyfin's series status, e.g. [ended] to keep only shows that are done airing.
+    series_status: list[Literal["ended", "continuing"]] | None = None
+
+    @field_validator("series_status", mode="before")
+    @classmethod
+    def _lower(cls, v: object) -> object:
+        return [s.lower() for s in v] if isinstance(v, list) else v
+
+
+class NotStartedRule(RuleBase):
+    """Shows with no episode played or partially played."""
+
+    type: Literal["not_started"]
+    target: Literal["collection"] = "collection"
+    include_specials: bool = False
+
+
+class AllItemsRule(RuleBase):
+    """Every series and movie; pair with `exclude` for "not in any other collection"."""
+
+    type: Literal["all_items"]
+    target: Literal["collection"] = "collection"
+
+
 Rule = Annotated[
-    MediaFilterRule | ContinueWatchingRule | NewSeasonsRule,
+    MediaFilterRule
+    | ContinueWatchingRule
+    | NewSeasonsRule
+    | AniListListRule
+    | AniListTopRatedRule
+    | BingeRule
+    | NotStartedRule
+    | AllItemsRule,
     Field(discriminator="type"),
 ]
 
@@ -204,15 +289,83 @@ class Config(Strict):
     jellyfin: JellyfinConfig
     options: Options = Options()
     libraries: dict[str, LibraryConfig] = Field(default_factory=dict)
+    # Collections fed from one or more libraries. Jellyfin collections are global,
+    # so a name shared across libraries is one collection, defined once here.
+    collections: dict[str, Rule] = Field(default_factory=dict)
 
-    def iter_rules(self) -> list[tuple[str, Rule]]:
-        """Yield (library_name, rule) for every enabled rule."""
-        out: list[tuple[str, Rule]] = []
-        for lib_name, lib in self.libraries.items():
-            for rule in lib.rules.values():
-                if rule.enabled:
-                    out.append((lib_name, rule))
-        return out
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_names(cls, raw: object) -> object:
+        """Give each rule its mapping key as name, and per-library rules their library."""
+        if not isinstance(raw, dict):
+            return raw
+        for lib_name, lib in (raw.get("libraries") or {}).items():
+            for rule_name, rule in ((lib or {}).get("rules") or {}).items():
+                if not isinstance(rule, dict):
+                    continue
+                if "libraries" in rule:
+                    raise ValueError(
+                        f"rule {rule_name!r}: `libraries` is implied under libraries.{lib_name}; "
+                        "use the top-level `collections:` section to span several"
+                    )
+                rule.setdefault("name", rule_name)
+                rule["libraries"] = [lib_name]
+        for rule_name, rule in (raw.get("collections") or {}).items():
+            if isinstance(rule, dict):
+                rule.setdefault("name", rule_name)
+                rule.setdefault("target", "collection")
+        return raw
+
+    @model_validator(mode="after")
+    def _check_rules(self) -> Config:
+        for rule in self.collections.values():
+            if rule.target != "collection":
+                raise ValueError(f"collections.{rule.name}: target must be collection")
+            if not rule.libraries:
+                raise ValueError(f"collections.{rule.name}: `libraries` is required")
+        seen: set[str] = set()
+        for rule in self._all_rules():
+            key = rule.name.lower()
+            if key in seen:
+                raise ValueError(f"rule name {rule.name!r} is used more than once")
+            seen.add(key)
+        self.iter_rules()  # validates `exclude` references
+        return self
+
+    def _all_rules(self) -> list[Rule]:
+        per_library = [r for lib in self.libraries.values() for r in lib.rules.values()]
+        return per_library + list(self.collections.values())
+
+    def library_names(self) -> list[str]:
+        return list(dict.fromkeys(lib for r in self._all_rules() for lib in r.libraries))
+
+    def iter_rules(self) -> list[Rule]:
+        """Every enabled rule, ordered so each comes after the rules it excludes."""
+        by_name = {r.name.lower(): r for r in self._all_rules()}
+        ordered: list[Rule] = []
+        state: dict[str, str] = {}  # name -> "visiting" | "done"
+
+        def visit(rule: Rule) -> None:
+            key = rule.name.lower()
+            if state.get(key) == "done":
+                return
+            if state.get(key) == "visiting":
+                raise ValueError(f"rule {rule.name!r} excludes itself, directly or indirectly")
+            state[key] = "visiting"
+            for ref in rule.exclude:
+                dep = by_name.get(ref.lower())
+                if dep is None:
+                    raise ValueError(f"rule {rule.name!r} excludes unknown rule {ref!r}")
+                if not dep.enabled:
+                    raise ValueError(f"rule {rule.name!r} excludes disabled rule {ref!r}")
+                visit(dep)
+            state[key] = "done"
+            ordered.append(rule)
+
+        for rule in self._all_rules():
+            if rule.enabled:
+                visit(rule)
+        return ordered
 
 
 def _substitute_env(node: object) -> object:
@@ -239,11 +392,5 @@ def load_config(path: Path) -> Config:
     raw = _substitute_env(raw)
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: top level of config must be a mapping")
-
-    # Inject each rule's mapping key as its name so rules are addressable by it.
-    for lib in (raw.get("libraries") or {}).values():
-        for rule_name, rule in ((lib or {}).get("rules") or {}).items():
-            if isinstance(rule, dict):
-                rule.setdefault("name", rule_name)
 
     return Config.model_validate(raw)

@@ -1,7 +1,7 @@
 """Thin, typed wrapper over the handful of Jellyfin REST endpoints this tool needs.
 
 Deliberately hand-written rather than generated: Jellyfin's OpenAPI spec exposes
-~1500 operations and we touch six.
+~1500 operations and we touch a handful.
 """
 
 from __future__ import annotations
@@ -231,6 +231,14 @@ class JellyfinClient:
         self.delete(f"/Collections/{collection_id}/Items", {"ids": ",".join(item_ids)})
 
     # --------------------------------------------------------------------- misc
+
+    def get_item(self, user_id: str, item_id: str) -> JsonDict:
+        return self.get(f"/Users/{user_id}/Items/{item_id}") or {}
+
+    def update_item(self, item: JsonDict) -> None:
+        """Save metadata edits. Takes the full DTO from `get_item`: Jellyfin
+        nulls any field left out (including Name)."""
+        self.post(f"/Items/{item['Id']}", json=item)
 
     def delete_item(self, item_id: str) -> None:
         """Used only to remove playlists/collections this tool owns."""

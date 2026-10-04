@@ -13,7 +13,7 @@ def test_example_config_loads(monkeypatch):
     monkeypatch.setenv("JELLYFIN_API_KEY", "secret")
     cfg = load_config(EXAMPLE)
     assert cfg.jellyfin.api_key == "secret"
-    rules = dict((r.name, r) for _, r in cfg.iter_rules())
+    rules = {r.name: r for r in cfg.iter_rules()}
     subs = rules["Anime - Missing Subtitles"]
     assert isinstance(subs, MediaFilterRule)
     assert subs.match.subtitles.present is False
