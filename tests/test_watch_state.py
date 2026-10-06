@@ -78,3 +78,23 @@ def test_specials_ignored_by_default():
     ]
     assert evaluate(cw(), FakeData(eps)) == []
     assert names(evaluate(cw(include_specials=True), FakeData(eps))) == ["A S00E02"]
+
+
+def test_continue_watching_exclude_drops_whole_series():
+    from jfcurator.config import Config
+
+    cfg = Config.model_validate(
+        {
+            "jellyfin": {"url": "http://x", "api_key": "k", "user": "u"},
+            "libraries": {"L": {"rules": {"CW": {"type": "continue_watching", "exclude": ["D"]}}}},
+            "collections": {"D": {"type": "all_items", "libraries": ["L"]}},
+        }
+    )
+    eps = [
+        episode("Kept", 1, 1, played=True),
+        episode("Kept", 1, 2),
+        episode("Dropped", 1, 1, played=True),
+        episode("Dropped", 1, 2),
+    ]
+    picks = evaluate(cfg.libraries["L"].rules["CW"], FakeData(eps), exclude={"series-Dropped"})
+    assert [p.item["SeriesName"] for p in picks] == ["Kept"]
