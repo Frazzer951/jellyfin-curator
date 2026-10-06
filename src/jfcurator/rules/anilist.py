@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from jfcurator.config import AniListListRule, AniListTopRatedRule
-from jfcurator.rules.base import Item, LibraryData, Pick
+from jfcurator.rules.base import LibraryData, Pick, Ref, index_by_provider
 
 log = logging.getLogger(__name__)
 
@@ -49,9 +49,6 @@ query ($page: Int, $perPage: Int) {
 
 class AniListError(RuntimeError):
     pass
-
-
-Ref = tuple[str, str]  # (provider, id), provider lower-cased as in our index
 
 
 @dataclass
@@ -163,15 +160,6 @@ class AniListSource:
             return mapping
 
 
-def _index(items: list[Item]) -> dict[Ref, list[Item]]:
-    index: dict[Ref, list[Item]] = defaultdict(list)
-    for item in items:
-        for provider, value in (item.get("ProviderIds") or {}).items():
-            if value:
-                index[(provider.lower(), str(value))].append(item)
-    return index
-
-
 def evaluate_anilist(
     rule: AniListListRule | AniListTopRatedRule,
     data: Sequence[LibraryData],
@@ -184,8 +172,8 @@ def evaluate_anilist(
         ids = source.top_rated(rule.count)
 
     mapping = source.mapping()
-    series = _index([i for d in data for i in d.series])
-    movies = _index([i for d in data for i in d.movies])
+    series = index_by_provider([i for d in data for i in d.series])
+    movies = index_by_provider([i for d in data for i in d.movies])
 
     picks: dict[str, Pick] = {}
     unmatched = 0

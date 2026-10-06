@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from contextlib import closing
+from contextlib import ExitStack, closing
+from pathlib import Path
 
 from jfcurator import __version__
 from jfcurator.client import JellyfinClient, JellyfinError
-from jfcurator.config import Config, Rule
+from jfcurator.config import Config, Rule, SimklListRule
 from jfcurator.rules import LibraryData, evaluate
 from jfcurator.rules.anilist import AniListError, AniListSource
+from jfcurator.rules.simkl import SimklError, SimklSource
 from jfcurator.sync import SyncResult, sync_collection, sync_playlist
 
 log = logging.getLogger(__name__)
@@ -46,8 +48,11 @@ def run(
     *,
     dry_run: bool = False,
     only: Iterable[str] = (),
+    state_dir: Path = Path("."),
 ) -> tuple[list[SyncResult], list[str]]:
     """Evaluate and sync every enabled rule. Returns (results, errors).
+
+    `state_dir` holds files kept between runs (the Simkl token and cache).
 
     A failing rule is logged and skipped so one bad rule can't block the rest,
     though rules that exclude it are skipped too: without its picks they'd
@@ -73,7 +78,14 @@ def run(
     )
 
     anilist = AniListSource()
-    with make_client(cfg) as client, closing(anilist):
+    simkl = None
+    if cfg.simkl and any(isinstance(r, SimklListRule) for r in rules):
+        simkl = SimklSource(cfg.simkl.client_id, state_dir)
+    with ExitStack() as stack:
+        client = stack.enter_context(make_client(cfg))
+        stack.enter_context(closing(anilist))
+        if simkl:
+            stack.enter_context(closing(simkl))
         log.info("connecting to %s", cfg.jellyfin.url)
         user = client.resolve_user(cfg.jellyfin.user)
         user_id = user["Id"]
@@ -104,6 +116,7 @@ def run(
                     rule,
                     [library(lib) for lib in rule.libraries],
                     anilist=anilist,
+                    simkl=simkl,
                     exclude=exclude,
                 )
                 outputs[rule.name.lower()] = {p.rollup_id for p in picks}
@@ -132,7 +145,7 @@ def run(
                         summary=rule.summary,
                     )
                 results.append(result)
-            except (JellyfinError, AniListError) as e:
+            except (JellyfinError, AniListError, SimklError) as e:
                 log.error("[%s] %s failed: %s", where, full_name, e)
                 log.debug("traceback for %s", full_name, exc_info=True)
                 errors.append(f"{rule.name}: {e}")

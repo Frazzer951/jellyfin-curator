@@ -11,6 +11,7 @@ EXAMPLE = Path(__file__).parent.parent / "config" / "config.example.yaml"
 def test_example_config_loads(monkeypatch):
     monkeypatch.setenv("JELLYFIN_URL", "http://jf:8096")
     monkeypatch.setenv("JELLYFIN_API_KEY", "secret")
+    monkeypatch.setenv("SIMKL_CLIENT_ID", "cid")
     cfg = load_config(EXAMPLE)
     assert cfg.jellyfin.api_key == "secret"
     rules = {r.name: r for r in cfg.iter_rules()}

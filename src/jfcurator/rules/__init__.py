@@ -14,10 +14,12 @@ from jfcurator.config import (
     NewSeasonsRule,
     NotStartedRule,
     Rule,
+    SimklListRule,
 )
 from jfcurator.rules.anilist import AniListSource, evaluate_anilist
 from jfcurator.rules.base import LibraryData, Pick, sort_picks
 from jfcurator.rules.media_filter import evaluate_media_filter
+from jfcurator.rules.simkl import SimklSource, evaluate_simkl
 from jfcurator.rules.watch_state import (
     evaluate_binge,
     evaluate_continue_watching,
@@ -50,6 +52,7 @@ def evaluate(
     data: LibraryData | Sequence[LibraryData],
     *,
     anilist: AniListSource | None = None,
+    simkl: SimklSource | None = None,
     exclude: Collection[str] = (),
 ) -> list[Pick]:
     """Run a rule against its libraries and return its picks, sorted and limited.
@@ -62,6 +65,10 @@ def evaluate(
         if anilist is None:
             raise ValueError(f"{rule.name}: AniList rules need an AniList source")
         picks = evaluate_anilist(rule, datas, anilist)
+    elif isinstance(rule, SimklListRule):
+        if simkl is None:
+            raise ValueError(f"{rule.name}: Simkl rules need a Simkl source")
+        picks = evaluate_simkl(rule, datas, simkl)
     else:
         picks = [p for d in datas for p in _evaluate_one(rule, d)]
 

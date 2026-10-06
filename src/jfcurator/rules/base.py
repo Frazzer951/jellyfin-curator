@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from jfcurator.client import JellyfinClient
 
 Item = dict[str, Any]
+Ref = tuple[str, str]  # (provider, id), provider lower-cased
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +101,16 @@ class LibraryData:
     @cached_property
     def movies(self) -> list[Item]:
         return self._fetch("Movie", "")
+
+
+def index_by_provider(items: list[Item]) -> dict[Ref, list[Item]]:
+    """Items keyed by each of their provider ids, for matching external lists."""
+    index: dict[Ref, list[Item]] = defaultdict(list)
+    for item in items:
+        for provider, value in (item.get("ProviderIds") or {}).items():
+            if value:
+                index[(provider.lower(), str(value))].append(item)
+    return index
 
 
 def _series_key(item: Item) -> tuple:

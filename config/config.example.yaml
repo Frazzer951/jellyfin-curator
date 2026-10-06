@@ -6,6 +6,12 @@ jellyfin:
   api_key: ${JELLYFIN_API_KEY}   # set in .env (Dashboard → API Keys)
   user: frazzer                  # whose watch state drives the watch-based rules
 
+# Simkl watchlists for TV and movies (optional). Register an app at
+# https://simkl.com/settings/developer/ (AUTH V2, "TV, devices & command line"),
+# then run `jfcurator simkl-auth` once to link your account.
+simkl:
+  client_id: ${SIMKL_CLIENT_ID}  # set in .env
+
 options:
   page_size: 500
   name_prefix: ""                # e.g. "⚙ " to visually tag managed playlists
@@ -112,11 +118,73 @@ collections:
     count: 200                # top N on AniList, before matching against the library
     sort_title: +0.0_Top Rated
 
+  # --- Simkl (TV and movies; needs the `simkl:` section above) --------------
+  TV - Planning to Watch:
+    type: simkl_list
+    libraries: [Shows]
+    status: planning          # planning | watching | paused (hold) | dropped | completed
+    sort_title: +2.0_TV Planning to Watch
+
+  TV - Currently Watching:
+    type: simkl_list
+    libraries: [Shows]
+    status: watching
+    sort_title: +2.1_TV Currently Watching
+
+  TV - Paused:
+    type: simkl_list
+    libraries: [Shows]
+    status: paused
+    sort_title: +2.2_TV Paused
+
+  TV - Dropped:
+    type: simkl_list
+    libraries: [Shows]
+    status: dropped
+    sort_title: +2.3_TV Dropped
+
+  TV - Completed:
+    type: simkl_list
+    libraries: [Shows]
+    status: completed
+    sort_title: +2.4_TV Completed
+
+  TV - No Collection:
+    type: all_items
+    libraries: [Shows]
+    exclude: [TV - Planning to Watch, TV - Currently Watching, TV - Paused, TV - Dropped, TV - Completed]
+    sort_title: +2.5_TV No Collection
+
+  # Simkl movies only have planning, dropped and completed.
+  Movies - Planning to Watch:
+    type: simkl_list
+    libraries: [Movies]
+    status: planning
+    sort_title: +3.0_Movies Planning to Watch
+
+  Movies - Dropped:
+    type: simkl_list
+    libraries: [Movies]
+    status: dropped
+    sort_title: +3.1_Movies Dropped
+
+  Movies - Completed:
+    type: simkl_list
+    libraries: [Movies]
+    status: completed
+    sort_title: +3.2_Movies Completed
+
+  Movies - No Collection:
+    type: all_items
+    libraries: [Movies]
+    exclude: [Movies - Planning to Watch, Movies - Dropped, Movies - Completed]
+    sort_title: +3.3_Movies No Collection
+
   # --- Watch state ----------------------------------------------------------
   Binge:
     type: binge               # started, with unwatched episodes left
     libraries: [Anime Shows, Shows]
-    exclude: [Dropped]
+    exclude: [Dropped, TV - Dropped]
     sort_title: ++Binge
     summary: Shows that I should finish because I haven't.
 
@@ -124,7 +192,7 @@ collections:
     type: binge
     libraries: [Anime Shows, Shows]
     series_status: [ended]
-    exclude: [Dropped]
+    exclude: [Dropped, TV - Dropped]
     sort_title: ++BingeEnded
     summary: Shows that I should finish because they've ended production.
 

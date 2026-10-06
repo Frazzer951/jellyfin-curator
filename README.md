@@ -12,13 +12,14 @@ spirit of Kometa. Runs once from the CLI or as a long-lived Docker container.
 | `new_seasons` | first episode of an untouched season after a finished one | "new seasons of shows I watch" |
 | `anilist_list` | series/movies on a public AniList user's lists, by entry status | Planning / Watching / Completed |
 | `anilist_top_rated` | AniList's top `count` anime by score that you have | "Top Rated" |
+| `simkl_list` | shows/movies on your Simkl watchlists, by status | TV/Movies Planning / Watching / Completed |
 | `binge` | shows that are started with unwatched episodes left (`series_status: [ended]` to narrow) | "Binge", "Binge Ended" |
 | `not_started` | shows with nothing played | "Not Started" |
 | `all_items` | every series and movie, usually with `exclude` | "No Collection" |
 
 Every rule targets a `playlist` (default: ordered, owned by the configured user)
 or a `collection` (global, unordered; episodes are rolled up to their series).
-The last five types are collection-only.
+The last six types are collection-only.
 
 ## Collections
 
@@ -41,6 +42,32 @@ mapping, the same source Kometa uses: AniDB and TVDB ids for shows, AniDB and
 IMDb ids for movies. The mapping is cached for 24h. A later-season AniList entry
 maps to its whole show, as in Kometa. Specials/OVAs (TVDB season 0) don't, so an
 OVA on your Planning list won't pull in the parent series.
+
+## Simkl
+
+`simkl_list` rules read the watchlists of a linked Simkl account. Simkl lists
+aren't public, so this takes a one-off setup:
+
+1. Register an app at <https://simkl.com/settings/developer/>. Pick AUTH V2 and
+   the "TV, devices & command line" type, then put its client id in `.env` as
+   `SIMKL_CLIENT_ID` and add `simkl: {client_id: ${SIMKL_CLIENT_ID}}` to the
+   config.
+2. Run `uv run jfcurator simkl-auth` (in Docker: `docker compose run --rm
+   jellyfin-curator simkl-auth`) and approve the link it prints.
+
+This saves `simkl-token.json` next to the config. The access token lasts 7 days
+and is refreshed automatically. The refresh token lasts 180 days from its last
+use, so you only need to re-link if the tool doesn't run for six months.
+
+Statuses are `planning`, `watching`, `paused`, `dropped` and `completed`. Simkl's
+own names (`plantowatch`, `hold`) work too. Movies have no `watching` or `paused`.
+Items are matched by IMDb/TMDB/TVDB id. TMDB ids only match the same kind, so a
+show only matches a series and a movie only matches a movie.
+
+Simkl suspends apps that download whole watchlists on a timer. The lists are
+therefore cached in `simkl-cache.json`. Each run checks Simkl's cheap
+`/sync/activities` endpoint and only fetches what changed since the last run.
+Delete the cache file to force a full refetch.
 
 Sync is diff-based: existing playlists are edited in place, never recreated.
 The tool only touches playlists/collections whose names match a rule.

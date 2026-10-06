@@ -217,6 +217,32 @@ class AniListTopRatedRule(RuleBase):
     count: int = Field(default=100, gt=0, le=1000)
 
 
+class SimklStatus(StrEnum):
+    WATCHING = "watching"
+    PLANTOWATCH = "plantowatch"
+    HOLD = "hold"
+    COMPLETED = "completed"
+    DROPPED = "dropped"
+
+
+# AniList's names, so Simkl rules can be written the same way.
+_SIMKL_ALIASES = {"planning": "plantowatch", "current": "watching", "paused": "hold"}
+
+
+class SimklListRule(RuleBase):
+    """Shows/movies on the authorized Simkl user's watchlists (movies have no watching/hold)."""
+
+    type: Literal["simkl_list"]
+    target: Literal["collection"] = "collection"
+    status: list[SimklStatus] = Field(min_length=1)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _listify(cls, v: object) -> object:
+        v = [v] if isinstance(v, str) else v
+        return [_SIMKL_ALIASES.get(s.lower(), s.lower()) for s in v]
+
+
 class BingeRule(RuleBase):
     """Shows that are started but have unwatched episodes left."""
 
@@ -253,6 +279,7 @@ Rule = Annotated[
     | NewSeasonsRule
     | AniListListRule
     | AniListTopRatedRule
+    | SimklListRule
     | BingeRule
     | NotStartedRule
     | AllItemsRule,
@@ -277,6 +304,12 @@ class JellyfinConfig(Strict):
         return v.rstrip("/")
 
 
+class SimklConfig(Strict):
+    # From an app registered at https://simkl.com/settings/developer/ (AUTH V2,
+    # "TV, devices & command line"). `jfcurator simkl-auth` links the account.
+    client_id: str = Field(min_length=1)
+
+
 class Options(Strict):
     page_size: int = Field(default=500, gt=0, le=1000)
     # Parallel page requests when listing large libraries.
@@ -293,6 +326,7 @@ class Options(Strict):
 class Config(Strict):
     jellyfin: JellyfinConfig
     options: Options = Options()
+    simkl: SimklConfig | None = None
     libraries: dict[str, LibraryConfig] = Field(default_factory=dict)
     # Collections fed from one or more libraries. Jellyfin collections are global,
     # so a name shared across libraries is one collection, defined once here.
@@ -328,6 +362,10 @@ class Config(Strict):
                 raise ValueError(f"collections.{rule.name}: target must be collection")
             if not rule.libraries:
                 raise ValueError(f"collections.{rule.name}: `libraries` is required")
+        if self.simkl is None:
+            for rule in self._all_rules():
+                if isinstance(rule, SimklListRule) and rule.enabled:
+                    raise ValueError(f"rule {rule.name!r} needs a top-level `simkl:` section")
         seen: set[str] = set()
         for rule in self._all_rules():
             key = rule.name.lower()

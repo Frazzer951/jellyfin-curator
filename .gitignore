@@ -12,3 +12,4 @@ config/config.yaml
 cache/
 *.log
 config/logs/
+config/simkl-*

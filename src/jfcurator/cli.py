@@ -22,6 +22,7 @@ from jfcurator.logging_setup import run_log_file, setup_logging
 from jfcurator.report import PREFIX, write_summary
 from jfcurator.rules.base import LibraryData
 from jfcurator.rules.media_filter import item_streams, stream_language
+from jfcurator.rules.simkl import SimklError, device_login
 from jfcurator.runner import make_client, run
 from jfcurator.sync import SyncResult
 
@@ -79,7 +80,9 @@ def _run_once(
     errors: list[str] = []
     with run_log_file(log_dir / f"{stem}.log" if log_dir else None):
         try:
-            results, errors = run(cfg, dry_run=dry_run, only=only or ())
+            results, errors = run(
+                cfg, dry_run=dry_run, only=only or (), state_dir=config_path.parent
+            )
         except JellyfinError as e:
             log.error("run failed: %s", e)
             log.debug("traceback", exc_info=True)
@@ -183,6 +186,33 @@ def languages(
             table.add_row(lang, str(n))
         table.add_row("[dim](none)[/]", str(none_of[kind]))
         console.print(table)
+
+
+@app.command("simkl-auth")
+def simkl_auth(config: ConfigOpt = Path("config/config.yaml")) -> None:
+    """Link your Simkl account (one-off; tokens are then refreshed automatically).
+
+    Saves simkl-token.json next to the config file.
+    """
+    cfg = _load(config)
+    if cfg.simkl is None:
+        console.print("[red]add a `simkl:` section with your client_id to the config first[/]")
+        raise typer.Exit(2)
+
+    def show(grant: dict) -> None:
+        console.print("Open this to connect your Simkl account:")
+        console.print(f"  {grant['verification_uri_complete']}", markup=False)
+        console.print(
+            f"Or go to {grant['verification_uri']} and enter: [bold]{grant['user_code']}[/]"
+        )
+        console.print("[dim]waiting for approval…[/]")
+
+    try:
+        path = device_login(cfg.simkl.client_id, config.parent, show)
+    except SimklError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from e
+    console.print(f"[green]linked[/], token saved to {path}")
 
 
 @app.command("run")
