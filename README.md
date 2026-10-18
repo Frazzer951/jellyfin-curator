@@ -120,3 +120,7 @@ The container runs `jfcurator daemon`, syncing every `JFCURATOR_INTERVAL` second
 uv run pytest
 uv run ruff check . && uv run ruff format .
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
