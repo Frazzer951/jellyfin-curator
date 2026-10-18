@@ -4,7 +4,7 @@
 jellyfin:
   url: ${JELLYFIN_URL} # set in .env
   api_key: ${JELLYFIN_API_KEY} # set in .env (Dashboard → API Keys)
-  user: frazzer # whose watch state drives the watch-based rules
+  user: your-jellyfin-user # whose watch state drives the watch-based rules
 
 # Simkl watchlists for TV and movies (optional). Register an app at
 # https://simkl.com/settings/developer/ (AUTH V2, "TV, devices & command line"),
@@ -40,7 +40,7 @@ libraries:
         # Per-series exceptions: replaces `audio` and/or `subtitles` for these shows.
         # Run `jfcurator languages "Anime Shows"` to see how tracks are actually tagged.
         overrides:
-          - series: [Link Click, The King's Avatar]
+          - series: [Example Donghua, Another Donghua] # e.g. Chinese-audio shows
             match:
               audio:
                 missing_language: [chi, zho]
@@ -76,35 +76,35 @@ collections:
   Planning to Watch:
     type: anilist_list
     libraries: [Anime Shows, Anime Movies]
-    username: Frazzer
+    username: your-anilist-username
     status: planning # planning | current (watching) | paused | dropped | completed | repeating
     sort_title: +1.0_Planning to Watch
 
   Currently Watching:
     type: anilist_list
     libraries: [Anime Shows]
-    username: Frazzer
+    username: your-anilist-username
     status: current
     sort_title: +1.1_Currently Watching
 
   Paused:
     type: anilist_list
     libraries: [Anime Shows]
-    username: Frazzer
+    username: your-anilist-username
     status: paused
     sort_title: +1.2_Paused
 
   Dropped:
     type: anilist_list
     libraries: [Anime Shows]
-    username: Frazzer
+    username: your-anilist-username
     status: dropped
     sort_title: +1.3_Dropped
 
   Completed:
     type: anilist_list
     libraries: [Anime Shows, Anime Movies]
-    username: Frazzer
+    username: your-anilist-username
     status: completed
     sort_title: +1.4_Completed
 
@@ -195,7 +195,7 @@ collections:
     libraries: [Anime Shows, Shows]
     exclude: [Dropped, TV - Dropped]
     sort_title: ++Binge
-    summary: Shows that I should finish because I haven't.
+    summary: Started shows with unwatched episodes left.
 
   Binge Ended:
     type: binge
@@ -203,10 +203,10 @@ collections:
     series_status: [ended]
     exclude: [Dropped, TV - Dropped]
     sort_title: ++BingeEnded
-    summary: Shows that I should finish because they've ended production.
+    summary: Started shows that have ended production, with unwatched episodes left.
 
   Not Started:
     type: not_started
     libraries: [Anime Shows, Shows]
     sort_title: ++a_NotStarted
-    summary: Shows I haven't started
+    summary: Shows that haven't been started yet.
