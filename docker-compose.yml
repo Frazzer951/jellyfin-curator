@@ -1,7 +1,7 @@
 services:
   jellyfin-curator:
     build: .
-    image: jellyfin-curator:latest
+    image: ghcr.io/frazzer951/jellyfin-curator:latest
     container_name: jellyfin-curator
     restart: unless-stopped
     env_file: .env

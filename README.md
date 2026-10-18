@@ -106,9 +106,22 @@ kept. Set `options.log_dir: null` to turn both off.
 
 ## Docker / Unraid
 
+Images are published to `ghcr.io/frazzer951/jellyfin-curator` on every push to
+`master` (`latest`, `sha-<short>`) and on `v*` tags (`1.2.3`, `1.2`, `1`).
+
 ```sh
-docker compose up -d --build
+docker run -d --name jellyfin-curator --restart unless-stopped \
+  --env-file .env \
+  -v ./config:/config \
+  ghcr.io/frazzer951/jellyfin-curator:latest
 ```
+
+`--env-file` can be swapped for `-e JELLYFIN_URL=... -e JELLYFIN_API_KEY=...`
+(plus `SIMKL_CLIENT_ID` for Simkl rules). On Unraid, add the same variables
+and a `/config` path mapping to the container template.
+
+With Compose, `docker compose up -d` pulls the published image;
+`docker compose up -d --build` builds it from source instead.
 
 The container runs `jfcurator daemon`, syncing every `JFCURATOR_INTERVAL` seconds
 (default 3600) and re-reading the config each cycle. It runs as `99:100`
